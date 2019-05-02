@@ -57,8 +57,6 @@ prepareMigration p tName = do
       tempableInst = InstanceD Nothing [] tempableInstType [migrateToTmpFunc]
   return $ tmpType ++ tmpMigration ++ [tempableInst]
 
---TODO: называть все файлы уникальными именами, зависящими от имени типа данных и его версии
-
 loadTmpType :: Q [Dec]
 loadTmpType = do
   (tNameStr : consInfoStr : _) <- runIO $ lines <$> readFile "oldTypeDesc"
@@ -178,7 +176,6 @@ genMigrationFromTmp actualType tmpType = do
       let pats = [varP pName]
           body = normalB $ appE (varE (mkName "userMigrate")) (varE pName)
       return $ clause pats body []
-          --error $ "Could not match constructor: " ++ show c
 
 prepareCompletnessTests :: Name -> Q Dec
 prepareCompletnessTests tName = do
@@ -191,10 +188,6 @@ prepareCompletnessTests tName = do
         buildUndefTest c@(NormalC name fieldTypes) = do
             let fields = replicate (length fieldTypes) $ varE $ mkName "undefined"
             appsE $ conE name : fields
-
---TODO: разобраться с удалением старого state и созданием чекпоинтов
---TODO: посмотреть, что не так с генерацией рекурсивных типов
---TODO: подумать, стоит ли генерировать миграции для рекурсивных типов
 
 findCons :: Con -> [Con] -> Bool
 findCons c cs = any (consMatch c) cs
@@ -211,15 +204,6 @@ getDataConstructors tName = do
     _ -> fail "genCons: tyCon may not be a type synonym."
   return (tyConName, tyVars, cs)
 
-{-
-migrateData :: (Migratable a b, Show a) => Proxy a -> Q [Dec]
-migrateData (p :: Proxy a) = do
-  tmp <- runIO $ readTmpFromFile "prepareMigration"
-  let currData = migrateTmpToData tmp
-  runIO $ writeFile "migrated" $ show currData
-  return []
--}
-
 class Tempable a b | b -> a, a -> b where
   dataToTemp :: a -> b
 
@@ -233,8 +217,6 @@ saveOldData (x :: a) = do
   --runIO $ removeDirectory "state"
   return []
 
---TODO: remove hardcoded path?
---TODO: replay scheduled events!
 readSavedState :: SafeCopy a => a -> SerialisationLayer a -> IO a
 readSavedState defaultVal serialisationLayer = do
   let checkpointsLogKey = LogKey { logDirectory = "state"
