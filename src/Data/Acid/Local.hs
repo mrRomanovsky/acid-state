@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, BangPatterns, CPP #-}
+{-# LANGUAGE DeriveDataTypeable, BangPatterns, CPP, TypeFamilies, FlexibleContexts, ScopedTypeVariables, MultiParamTypeClasses, FunctionalDependencies #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.Acid.Local
@@ -29,6 +29,7 @@ module Data.Acid.Local
     , defaultSerialisationLayer
     ) where
 
+import Data.Acid.Migratable
 import Data.Acid.Archive
 import Data.Acid.Log as Log
 import Data.Acid.Core
@@ -50,7 +51,7 @@ import Data.Typeable                  ( Typeable, typeOf )
 import Data.IORef
 import System.FilePath                ( (</>), takeDirectory )
 import System.FileLock
-import System.Directory               ( createDirectoryIfMissing )
+import System.Directory               ( createDirectoryIfMissing, doesFileExist )
 
 
 {-| State container offering full ACID (Atomicity, Consistency, Isolation and Durability)
@@ -350,6 +351,74 @@ data SerialisationLayer st =
 defaultSerialisationLayer :: SafeCopy st => SerialisationLayer st
 defaultSerialisationLayer = SerialisationLayer safeCopySerialiser safeCopySerialiser defaultArchiver
 
+
+{-
+resumeLocalStateFrom :: (IsAcidic st, Migratable st b)
+                  => FilePath            -- ^ Location of the checkpoint and transaction files.
+                  -> st                  -- ^ Initial state value. This value is only used if no checkpoint is
+                                         --   found.
+                  -> Bool                -- ^ True => load checkpoint before acquiring the lock.
+                  -> SerialisationLayer st -- ^ Serialisation layer to use for checkpoints, events and archives.
+                  -> IO (IO (AcidState st))
+resumeLocalStateFrom directory initialState delayLocking serialisationLayer = do
+  migrationPrepared <- doesFileExist "tmpMigrated"
+  if not migrationPrepared then
+    case delayLocking of
+      True -> do
+        (n, st) <- loadCheckpoint
+        return $ do
+          lock  <- maybeLockFile lockFile
+          replayEvents lock n st
+      False -> do
+        lock    <- maybeLockFile lockFile
+        (n, st) <- loadCheckpoint `onException` unlockFile lock
+        return $ do
+          replayEvents lock n st
+  else do
+    lock    <- maybeLockFile lockFile
+    tmpData <- readTmpFromFile "tmpMigrated"
+    return $ do replayEvents lock 0 (migrateTmpToData tmpData)
+  where
+    lockFile = directory </> "open.lock"
+    eventsLogKey = LogKey { logDirectory = directory
+                          , logPrefix = "events"
+                          , logSerialiser = eventSerialiser serialisationLayer
+                          , logArchiver   = archiver serialisationLayer }
+    checkpointsLogKey = LogKey { logDirectory = directory
+                               , logPrefix = "checkpoints"
+                               , logSerialiser = checkpointSerialiser serialisationLayer
+                               , logArchiver = archiver serialisationLayer }
+    loadCheckpoint = do
+      mbLastCheckpoint <- Log.newestEntry checkpointsLogKey
+      case mbLastCheckpoint of
+        Nothing ->
+          return (0, initialState)
+        Just (Checkpoint eventCutOff !val) ->
+          -- N.B. We must be strict in val so that we force any
+          -- lurking deserialisation error immediately.
+          return (eventCutOff, val)
+    replayEvents lock n st = do
+      core <- mkCore (eventsToMethods acidEvents) st
+
+      eventsLog <- openFileLog eventsLogKey
+      events <- readEntriesFrom eventsLog n
+      mapM_ (runColdMethod core) events
+      ensureLeastEntryId eventsLog n
+      checkpointsLog <- openFileLog checkpointsLogKey
+      stateCopy <- newIORef undefined
+      withCoreState core (writeIORef stateCopy)
+
+      return $ toAcidState LocalState { localCore = core
+                                      , localCopy = stateCopy
+                                      , localEvents = eventsLog
+                                      , localCheckpoints = checkpointsLog
+                                      , localLock = lock
+                                      }
+    maybeLockFile path = do
+      createDirectoryIfMissing True (takeDirectory path)
+      maybe (throwIO (StateIsLocked path))
+                            return =<< tryLockFile path Exclusive
+-}
 resumeLocalStateFrom :: (IsAcidic st)
                   => FilePath            -- ^ Location of the checkpoint and transaction files.
                   -> st                  -- ^ Initial state value. This value is only used if no checkpoint is
@@ -409,8 +478,7 @@ resumeLocalStateFrom directory initialState delayLocking serialisationLayer =
       createDirectoryIfMissing True (takeDirectory path)
       maybe (throwIO (StateIsLocked path))
                             return =<< tryLockFile path Exclusive
-
-
+                            
 checkpointRestoreError msg
     = error $ "Could not parse saved checkpoint due to the following error: " ++ msg
 
