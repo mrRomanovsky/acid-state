@@ -39,6 +39,7 @@ Library
                        Data.Acid.Log, Data.Acid.CRC,
                        Data.Acid.Abstract, Data.Acid.Core,
                        Data.Acid.TemplateHaskell
+                       Data.Acid.GenDataType
 
   Other-modules:       Paths_acid_state,
                        FileIO
