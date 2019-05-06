@@ -108,23 +108,10 @@ genTmpMigration ty = do
 
 restoreData :: (IsAcidic st, Migratable st tmp, SafeCopy st, Typeable st) => Proxy st -> Q [Dec]
 restoreData (p :: Proxy st) = do
-  runIO $ catch (checkCompletness p) completnessHandler
   tmp <- runIO $ readTmpFromFile "tmpMigrated"
   let stData = migrate tmp :: st
   !_ <- runIO $ openLocalState stData
   return []
-
-checkCompletness :: Migratable st tmp => Proxy st -> IO ()
-checkCompletness (p :: Proxy st) = do
-  let !_ = map (\x -> let !y = (migrate x :: st) in y) completnessTests
-  return ()
-
-completnessHandler :: SomeException -> IO ()
-completnessHandler e =  do
-    case fromException e of
-        Just (x:: PatternMatchFail) -> putStrLn "Migrate function is not complete! Please append clauses to userMigrate!"
-                                       >> throwIO e
-        _ -> return ()
 
 genMigratable :: Name -> Q [Dec]
 genMigratable tName = do
