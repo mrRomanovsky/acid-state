@@ -209,7 +209,7 @@ class Tempable a b | b -> a, a -> b where
 
 saveOldData :: (Tempable a b, Show b, Typeable a, IsAcidic a, SafeCopy a) => a -> Q [Dec]
 saveOldData (x :: a) = do
-  oldAcid <- runIO $ openLocalState x --readSavedState x defaultSerialisationLayer
+  oldAcid <- runIO $ readSavedState x defaultSerialisationLayer
   runIO $ createCheckpoint oldAcid
   oldData <- runIO $ readSavedState x defaultSerialisationLayer
   let tmp = dataToTemp oldData
